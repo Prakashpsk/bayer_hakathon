@@ -50,9 +50,7 @@ jobs:
               missing=1
             fi
           done
-          if [ "$missing" -ne 0 ]; then
-            exit 1
-          fi
+          [ "$missing" -ne 0 ] && exit 1 || true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -103,31 +101,40 @@ jobs:
         env:
           IMAGE_URI: ${{ env.IMAGE_URI }}
           AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
           HOST_PORT: ${{ env.HOST_PORT }}
           CONTAINER_PORT: ${{ env.CONTAINER_PORT }}
           EC2_ENV_FILE: ${{ secrets.EC2_ENV_FILE }}
-          PYDANTIC_AI_MODEL: ${{ env.PYDANTIC_AI_MODEL }}
-          OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
+          PYDANTIC_AI_MODEL: ${{ secrets.PYDANTIC_AI_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          envs: IMAGE_URI,AWS_REGION,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,EC2_ENV_FILE,PYDANTIC_AI_MODEL,OPENAI_API_KEY
+          envs: IMAGE_URI,AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,CONTAINER_NAME,HOST_PORT,CONTAINER_PORT,EC2_ENV_FILE,PYDANTIC_AI_MODEL,OPENAI_API_KEY
           script: |
             set -eu
-            echo "Deploying $IMAGE_URI"
 
-            if ! command -v docker >/dev/null 2>&1; then
-              echo "docker is not installed on the EC2 host" >&2
-              exit 1
-            fi
-
+            # ── install aws cli if missing ──────────────────────────────
             if ! command -v aws >/dev/null 2>&1; then
-              echo "aws cli is not installed on the EC2 host (required for ECR login)" >&2
-              exit 1
+              echo "Installing AWS CLI..."
+              curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+              unzip -q /tmp/awscliv2.zip -d /tmp
+              sudo /tmp/aws/install
+              rm -rf /tmp/awscliv2.zip /tmp/aws
             fi
+
+            # ── install docker if missing ───────────────────────────────
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Installing Docker..."
+              curl -fsSL https://get.docker.com | sudo sh
+              sudo usermod -aG docker "$USER"
+            fi
+
+            echo "Deploying $IMAGE_URI"
 
             ECR_REGISTRY="$(echo "$IMAGE_URI" | cut -d/ -f1)"
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
@@ -136,25 +143,18 @@ jobs:
 
             if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
               docker stop "$CONTAINER_NAME" || true
-              docker rm "$CONTAINER_NAME" || true
+              docker rm   "$CONTAINER_NAME" || true
             fi
 
             ENV_FILE_ARGS=""
             if [ -n "${EC2_ENV_FILE:-}" ]; then
-              if [ ! -f "$EC2_ENV_FILE" ]; then
-                echo "EC2_ENV_FILE does not exist: $EC2_ENV_FILE" >&2
-                exit 1
-              fi
+              [ -f "$EC2_ENV_FILE" ] || { echo "EC2_ENV_FILE not found: $EC2_ENV_FILE" >&2; exit 1; }
               ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
             fi
 
             SECRET_ENV_ARGS=""
-            if [ -n "${PYDANTIC_AI_MODEL:-}" ]; then
-              SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e PYDANTIC_AI_MODEL=$PYDANTIC_AI_MODEL"
-            fi
-            if [ -n "${OPENAI_API_KEY:-}" ]; then
-              SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e OPENAI_API_KEY=$OPENAI_API_KEY"
-            fi
+            [ -n "${PYDANTIC_AI_MODEL:-}" ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e PYDANTIC_AI_MODEL=$PYDANTIC_AI_MODEL"
+            [ -n "${OPENAI_API_KEY:-}"    ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e OPENAI_API_KEY=$OPENAI_API_KEY"
 
             # shellcheck disable=SC2086
             docker run -d --restart unless-stopped \
@@ -165,3 +165,4 @@ jobs:
               "$IMAGE_URI"
 
             docker image prune -f >/dev/null 2>&1 || true
+            echo "Deploy complete."
