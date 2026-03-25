@@ -121,8 +121,9 @@ jobs:
             # ── install aws cli if missing ──────────────────────────────
             if ! command -v aws >/dev/null 2>&1; then
               echo "Installing AWS CLI..."
+              sudo apt-get install -y unzip 2>/dev/null || sudo yum install -y unzip 2>/dev/null || true
               curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-              unzip -q /tmp/awscliv2.zip -d /tmp
+              python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
               sudo /tmp/aws/install
               rm -rf /tmp/awscliv2.zip /tmp/aws
             fi
