@@ -1,0 +1,7 @@
+pydantic-ai
+pydantic
+rich
+python-dotenv
+fastapi
+uvicorn
+jinja2

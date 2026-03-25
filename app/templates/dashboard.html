@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Incident Commander</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0a0e17;
+            color: #e0e6ed;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #1a1f35 0%, #0d1224 100%);
+            border-bottom: 2px solid #1e90ff;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 22px;
+            color: #1e90ff;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .header .badge {
+            background: #ff4444;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
+
+        /* Alert Card */
+        .alert-card {
+            background: linear-gradient(135deg, #1c1130 0%, #2d1440 100%);
+            border: 1px solid #ff4444;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .alert-card h2 { color: #ff6666; font-size: 18px; margin-bottom: 12px; }
+        .alert-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 14px; }
+        .alert-detail span.label { color: #888; }
+        .alert-detail span.value { color: #eee; }
+
+        /* Trigger Button */
+        .trigger-btn {
+            display: block;
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #1e90ff 0%, #0066cc 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-bottom: 24px;
+            letter-spacing: 1px;
+            transition: all 0.3s;
+        }
+        .trigger-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(30,144,255,0.3); }
+        .trigger-btn:disabled { background: #333; cursor: wait; }
+
+        /* Status Bar */
+        .status-bar {
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            display: none;
+        }
+        .status-bar.active { display: block; }
+        .status-text { color: #1e90ff; font-size: 16px; font-weight: 600; }
+        .progress-bar {
+            height: 4px;
+            background: #1f2937;
+            border-radius: 2px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #1e90ff, #00d4ff);
+            border-radius: 2px;
+            width: 0%;
+            animation: loading 8s ease-in-out forwards;
+        }
+        @keyframes loading {
+            0% { width: 0%; }
+            20% { width: 25%; }
+            50% { width: 50%; }
+            80% { width: 75%; }
+            95% { width: 90%; }
+            100% { width: 95%; }
+        }
+
+        /* Reasoning Loop */
+        .reasoning-loop {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+            gap: 4px;
+        }
+        .phase {
+            flex: 1;
+            text-align: center;
+            padding: 10px 4px;
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #555;
+            transition: all 0.5s;
+        }
+        .phase.active { background: #1a2744; border-color: #1e90ff; color: #1e90ff; }
+        .phase.done { background: #0d2818; border-color: #22c55e; color: #22c55e; }
+
+        /* Report Section */
+        .report-section { display: none; }
+        .report-section.visible { display: block; }
+
+        .report-card {
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+        }
+        .report-card h3 {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .report-card .content { font-size: 15px; line-height: 1.7; }
+        .report-card.root-cause { border-left: 4px solid #ff4444; }
+        .report-card.action { border-left: 4px solid #22c55e; }
+        .report-card.confidence { border-left: 4px solid #1e90ff; }
+
+        /* Evidence List */
+        .evidence-list { list-style: none; }
+        .evidence-list li {
+            padding: 8px 12px;
+            background: #0d1117;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 13px;
+            border-left: 3px solid #f59e0b;
+        }
+
+        /* Timeline */
+        .timeline-list { list-style: none; }
+        .timeline-list li {
+            padding: 8px 12px;
+            position: relative;
+            padding-left: 24px;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .timeline-list li::before {
+            content: '';
+            position: absolute;
+            left: 8px;
+            top: 14px;
+            width: 8px;
+            height: 8px;
+            background: #1e90ff;
+            border-radius: 50%;
+        }
+
+        /* Chain of Thought */
+        .cot-step {
+            padding: 10px 16px;
+            background: #0d1117;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-left: 3px solid #6366f1;
+        }
+        .cot-step .step-num {
+            color: #6366f1;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        /* Usage Stats */
+        .usage-bar {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            padding: 16px;
+            background: #111827;
+            border-radius: 12px;
+            margin-top: 16px;
+        }
+        .usage-stat { text-align: center; }
+        .usage-stat .num { font-size: 24px; font-weight: 700; color: #1e90ff; }
+        .usage-stat .label { font-size: 11px; color: #666; margin-top: 4px; }
+
+        /* Confidence Bar */
+        .conf-bar-bg {
+            height: 24px;
+            background: #1f2937;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .conf-bar-fill {
+            height: 100%;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            transition: width 1s ease;
+        }
+
+        /* Past Reports */
+        .past-reports { margin-top: 40px; }
+        .past-reports h2 { color: #888; font-size: 16px; margin-bottom: 16px; }
+        .past-report-item {
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .past-report-item:hover { border-color: #1e90ff; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>AUTONOMOUS INCIDENT COMMANDER</h1>
+        <span class="badge">BAYER AI HACKATHON 2026</span>
+    </div>
+
+    <div class="container">
+        <!-- Alert Card -->
+        <div class="alert-card">
+            <h2>SIMULATED ALERT: P99 Latency Critical</h2>
+            <div class="alert-detail">
+                <span class="label">Service:</span><span class="value">checkout-service</span>
+                <span class="label">Latency:</span><span class="value">2001ms (threshold: 500ms)</span>
+                <span class="label">Error Rate:</span><span class="value">73%</span>
+                <span class="label">Affected Users:</span><span class="value">~450</span>
+            </div>
+        </div>
+
+        <!-- Trigger Button -->
+        <button class="trigger-btn" id="triggerBtn" onclick="triggerInvestigation()">
+            TRIGGER INVESTIGATION
+        </button>
+
+        <!-- Reasoning Loop Visualization -->
+        <div class="reasoning-loop">
+            <div class="phase" id="phase-detect">DETECT</div>
+            <div class="phase" id="phase-plan">PLAN</div>
+            <div class="phase" id="phase-investigate">INVESTIGATE</div>
+            <div class="phase" id="phase-decide">DECIDE</div>
+            <div class="phase" id="phase-act">ACT</div>
+            <div class="phase" id="phase-report">REPORT</div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar" id="statusBar">
+            <div class="status-text" id="statusText">Initializing investigation...</div>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+
+        <!-- Report Section (hidden until complete) -->
+        <div class="report-section" id="reportSection">
+            <!-- Root Cause -->
+            <div class="report-card root-cause">
+                <h3>Root Cause</h3>
+                <div class="content" id="rootCause"></div>
+            </div>
+
+            <!-- Recommended Action -->
+            <div class="report-card action">
+                <h3>Recommended Action</h3>
+                <div class="content" id="recAction"></div>
+            </div>
+
+            <!-- Confidence -->
+            <div class="report-card confidence">
+                <h3>Confidence Level</h3>
+                <div class="conf-bar-bg">
+                    <div class="conf-bar-fill" id="confBar" style="width:0%"></div>
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div class="report-card">
+                <h3>Incident Summary</h3>
+                <div class="content" id="summary"></div>
+            </div>
+
+            <!-- Evidence -->
+            <div class="report-card">
+                <h3>Evidence</h3>
+                <ul class="evidence-list" id="evidenceList"></ul>
+            </div>
+
+            <!-- Timeline -->
+            <div class="report-card">
+                <h3>Timeline</h3>
+                <ul class="timeline-list" id="timelineList"></ul>
+            </div>
+
+            <!-- Impact -->
+            <div class="report-card">
+                <h3>Impact Assessment</h3>
+                <div class="content" id="impact"></div>
+            </div>
+
+            <!-- Chain of Thought -->
+            <div class="report-card">
+                <h3>Agent Chain of Thought</h3>
+                <div id="chainOfThought"></div>
+            </div>
+
+            <!-- Usage Stats -->
+            <div class="usage-bar">
+                <div class="usage-stat">
+                    <div class="num" id="usageRequests">-</div>
+                    <div class="label">LLM Requests</div>
+                </div>
+                <div class="usage-stat">
+                    <div class="num" id="usageInput">-</div>
+                    <div class="label">Input Tokens</div>
+                </div>
+                <div class="usage-stat">
+                    <div class="num" id="usageOutput">-</div>
+                    <div class="label">Output Tokens</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Past Reports -->
+        {% if reports %}
+        <div class="past-reports">
+            <h2>Previous Investigations</h2>
+            {% for r in reports %}
+            <div class="past-report-item" onclick="window.location='/report/{{ r.id }}'">
+                <strong>{{ r.report.title }}</strong>
+                <br><small style="color:#666">{{ r.timestamp }} | Confidence: {{ (r.report.confidence * 100)|int }}%</small>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        const phases = ['detect', 'plan', 'investigate', 'decide', 'act', 'report'];
+        const phaseMessages = [
+            'Alert received. Analyzing severity...',
+            'Planning investigation. Dispatching agents...',
+            'Agents investigating: Logs, Metrics, Deployments...',
+            'Correlating findings across all agents...',
+            'Determining remediation action...',
+            'Compiling RCA report...'
+        ];
+
+        async function triggerInvestigation() {
+            const btn = document.getElementById('triggerBtn');
+            const statusBar = document.getElementById('statusBar');
+            const reportSection = document.getElementById('reportSection');
+
+            btn.disabled = true;
+            btn.textContent = 'INVESTIGATION IN PROGRESS...';
+            statusBar.classList.add('active');
+            reportSection.classList.remove('visible');
+
+            // Reset progress animation
+            const fill = document.getElementById('progressFill');
+            fill.style.animation = 'none';
+            fill.offsetHeight; // trigger reflow
+            fill.style.animation = 'loading 30s ease-in-out forwards';
+
+            // Animate phases
+            let phaseIdx = 0;
+            const phaseInterval = setInterval(() => {
+                if (phaseIdx < phases.length) {
+                    if (phaseIdx > 0) {
+                        document.getElementById('phase-' + phases[phaseIdx - 1]).classList.remove('active');
+                        document.getElementById('phase-' + phases[phaseIdx - 1]).classList.add('done');
+                    }
+                    document.getElementById('phase-' + phases[phaseIdx]).classList.add('active');
+                    document.getElementById('statusText').textContent = phaseMessages[phaseIdx];
+                    phaseIdx++;
+                }
+            }, 4000);
+
+            try {
+                const response = await fetch('/investigate', { method: 'POST' });
+                const data = await response.json();
+
+                clearInterval(phaseInterval);
+
+                // Mark all phases done
+                phases.forEach(p => {
+                    const el = document.getElementById('phase-' + p);
+                    el.classList.remove('active');
+                    el.classList.add('done');
+                });
+
+                fill.style.animation = 'none';
+                fill.style.width = '100%';
+                document.getElementById('statusText').textContent = 'Investigation complete!';
+
+                // Populate report
+                const report = data.report;
+                document.getElementById('rootCause').textContent = report.root_cause;
+                document.getElementById('recAction').textContent = report.recommended_action;
+                document.getElementById('summary').textContent = report.incident_summary;
+                document.getElementById('impact').textContent = report.impact;
+
+                // Confidence bar
+                const confPct = Math.round(report.confidence * 100);
+                const confBar = document.getElementById('confBar');
+                confBar.style.width = confPct + '%';
+                confBar.textContent = confPct + '%';
+                confBar.style.background = confPct > 80
+                    ? 'linear-gradient(90deg, #22c55e, #16a34a)'
+                    : confPct > 50
+                    ? 'linear-gradient(90deg, #f59e0b, #d97706)'
+                    : 'linear-gradient(90deg, #ef4444, #dc2626)';
+
+                // Evidence
+                const evidenceList = document.getElementById('evidenceList');
+                evidenceList.innerHTML = '';
+                (report.evidence || []).forEach(e => {
+                    const li = document.createElement('li');
+                    li.textContent = e;
+                    evidenceList.appendChild(li);
+                });
+
+                // Timeline
+                const timelineList = document.getElementById('timelineList');
+                timelineList.innerHTML = '';
+                (report.timeline || []).forEach(t => {
+                    const li = document.createElement('li');
+                    li.textContent = t;
+                    timelineList.appendChild(li);
+                });
+
+                // Chain of Thought
+                const cot = document.getElementById('chainOfThought');
+                cot.innerHTML = '';
+                (report.chain_of_thought || []).forEach((step, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'cot-step';
+                    div.innerHTML = '<span class="step-num">' + (i + 1) + '.</span> ' + step;
+                    cot.appendChild(div);
+                });
+
+                // Usage
+                document.getElementById('usageRequests').textContent = data.usage.requests;
+                document.getElementById('usageInput').textContent = data.usage.input_tokens.toLocaleString();
+                document.getElementById('usageOutput').textContent = data.usage.output_tokens.toLocaleString();
+
+                reportSection.classList.add('visible');
+
+            } catch (err) {
+                document.getElementById('statusText').textContent = 'Error: ' + err.message;
+                clearInterval(phaseInterval);
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'TRIGGER INVESTIGATION';
+        }
+    </script>
+</body>
+</html>
