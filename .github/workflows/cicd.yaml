@@ -1,4 +1,29 @@
-- name: Deploy to EC2 (SSH)
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE_URI: ${{ secrets.ECR_REPOSITORY_URI }}:latest
+  AWS_REGION: us-east-1
+  CONTAINER_NAME: my-app
+  HOST_PORT: 80
+  CONTAINER_PORT: 3000
+  # Optional: EC2_ENV_FILE path on EC2 instance (if you use --env-file)
+  # EC2_ENV_FILE: /home/ec2-user/.env
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ... other steps like building Docker image, pushing to ECR, etc. ...
+
+      - name: Deploy to EC2 (SSH)
         uses: appleboy/ssh-action@v1.0.3
         env:
           IMAGE_URI: ${{ env.IMAGE_URI }}
@@ -20,59 +45,55 @@
           script: |
             set -eu
 
-            # ── install aws cli if missing ──────────────────────────────
+            # ── install AWS CLI if missing (architecture‑aware) ──
             if ! command -v aws >/dev/null 2>&1; then
               echo "Installing AWS CLI..."
-              # Auto-detect architecture (x86_64 or aarch64)
               ARCH=$(uname -m)
               URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
               [ "$ARCH" = "aarch64" ] && URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
-              
               curl -fsSL "$URL" -o /tmp/awscliv2.zip
               python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
-              
-              # IMPORTANT: Python extractall strips the executable bit. We must restore it.
-              chmod -R +x /tmp/aws
-              
+              chmod -R +x /tmp/aws                     # 🔥 fix missing execute permissions
               sudo /tmp/aws/install --update
               rm -rf /tmp/awscliv2.zip /tmp/aws
             fi
 
-            # ── install docker if missing ───────────────────────────────
+            # ── install Docker if missing ───────────────────────────
             if ! command -v docker >/dev/null 2>&1; then
               echo "Installing Docker..."
               curl -fsSL https://get.docker.com | sudo sh
               sudo usermod -aG docker "$USER"
-              # Note: Group changes require a logout/login. 
-              # We use 'sudo docker' below to ensure this works on the first run.
+              # Note: group change requires re‑login; we use 'sudo docker' below to be safe
             fi
 
             echo "Deploying $IMAGE_URI"
 
-            # Log in to ECR
+            # Log in to Amazon ECR
             ECR_REGISTRY="$(echo "$IMAGE_URI" | cut -d/ -f1)"
             aws ecr get-login-password --region "$AWS_REGION" | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-            # Pull and Update
+            # Pull the latest image
             sudo docker pull "$IMAGE_URI"
 
+            # Stop and remove existing container if it exists
             if sudo docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
               echo "Stopping and removing old container..."
               sudo docker stop "$CONTAINER_NAME" || true
               sudo docker rm   "$CONTAINER_NAME" || true
             fi
 
-            # Environment Setup
+            # Environment file (if present on EC2)
             ENV_FILE_ARGS=""
             if [ -n "${EC2_ENV_FILE:-}" ] && [ -f "$EC2_ENV_FILE" ]; then
               ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
             fi
 
+            # Secret environment variables passed from GitHub secrets
             SECRET_ENV_ARGS=""
             [ -n "${PYDANTIC_AI_MODEL:-}" ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e PYDANTIC_AI_MODEL=$PYDANTIC_AI_MODEL"
             [ -n "${OPENAI_API_KEY:-}"    ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e OPENAI_API_KEY=$OPENAI_API_KEY"
 
-            # Run Container
+            # Run the new container
             # shellcheck disable=SC2086
             sudo docker run -d --restart unless-stopped \
               --name "$CONTAINER_NAME" \
@@ -81,5 +102,6 @@
               $SECRET_ENV_ARGS \
               "$IMAGE_URI"
 
+            # Clean up unused images
             sudo docker image prune -f >/dev/null 2>&1 || true
             echo "Deploy complete."
