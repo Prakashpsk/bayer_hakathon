@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-2
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   CONTAINER_NAME: incident-commander
   HOST_PORT: "8000"
