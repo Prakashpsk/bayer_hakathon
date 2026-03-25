@@ -30,10 +30,11 @@ async def dashboard(request: Request):
     """Serve the main dashboard UI."""
     try:
         print(f"DEBUG: Serving dashboard. Reports in store: {len(reports_store)}")
-        return templates.TemplateResponse("dashboard.html", {
-            "request": request,
-            "reports": list(reports_store.values()),
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="dashboard.html",
+            context={"request": request, "reports": list(reports_store.values())}
+        )
     except Exception as e:
         print(f"DEBUG ERROR in dashboard: {str(e)}")
         import traceback
