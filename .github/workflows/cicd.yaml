@@ -18,6 +18,8 @@ env:
   CONTAINER_NAME: incident-commander
   HOST_PORT: "8000"
   CONTAINER_PORT: "8000"
+  PYDANTIC_AI_MODEL: ${{ secrets.PYDANTIC_AI_MODEL }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
   build_push_deploy:
@@ -83,6 +85,8 @@ jobs:
           HOST_PORT: ${{ env.HOST_PORT }}
           CONTAINER_PORT: ${{ env.CONTAINER_PORT }}
           EC2_ENV_FILE: ${{ secrets.EC2_ENV_FILE }}
+          PYDANTIC_AI_MODEL: ${{ env.PYDANTIC_AI_MODEL }}
+          OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -121,11 +125,20 @@ jobs:
               ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
             fi
 
+            SECRET_ENV_ARGS=""
+            if [ -n "${PYDANTIC_AI_MODEL:-}" ]; then
+              SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e PYDANTIC_AI_MODEL=$PYDANTIC_AI_MODEL"
+            fi
+            if [ -n "${OPENAI_API_KEY:-}" ]; then
+              SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e OPENAI_API_KEY=$OPENAI_API_KEY"
+            fi
+
             # shellcheck disable=SC2086
             docker run -d --restart unless-stopped \
               --name "$CONTAINER_NAME" \
               -p "$HOST_PORT:$CONTAINER_PORT" \
               $ENV_FILE_ARGS \
+              $SECRET_ENV_ARGS \
               "$IMAGE_URI"
 
             docker image prune -f >/dev/null 2>&1 || true
