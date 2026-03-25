@@ -118,10 +118,11 @@ jobs:
           script: |
             set -eu
 
-            # ── install aws cli if missing ──────────────────────────────
+            # ── install aws cli if missing (using Python3 to unzip) ──────
             if ! command -v aws >/dev/null 2>&1; then
               echo "Installing AWS CLI..."
               curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+              # Use python3 to extract since unzip is missing
               python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
               sudo /tmp/aws/install
               rm -rf /tmp/awscliv2.zip /tmp/aws
@@ -132,6 +133,9 @@ jobs:
               echo "Installing Docker..."
               curl -fsSL https://get.docker.com | sudo sh
               sudo usermod -aG docker "$USER"
+              # Apply group changes to current session
+              newgrp docker <<EONG
+            EONG
             fi
 
             echo "Deploying $IMAGE_URI"
@@ -142,14 +146,19 @@ jobs:
             docker pull "$IMAGE_URI"
 
             if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+              echo "Stopping/Removing existing container..."
               docker stop "$CONTAINER_NAME" || true
               docker rm   "$CONTAINER_NAME" || true
             fi
 
             ENV_FILE_ARGS=""
             if [ -n "${EC2_ENV_FILE:-}" ]; then
-              [ -f "$EC2_ENV_FILE" ] || { echo "EC2_ENV_FILE not found: $EC2_ENV_FILE" >&2; exit 1; }
-              ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
+              # Only try to use the file if it actually exists on the EC2 filesystem
+              if [ -f "$EC2_ENV_FILE" ]; then
+                ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
+              else
+                echo "Warning: EC2_ENV_FILE defined but file not found at $EC2_ENV_FILE"
+              fi
             fi
 
             SECRET_ENV_ARGS=""
@@ -166,12 +175,3 @@ jobs:
 
             docker image prune -f >/dev/null 2>&1 || true
             echo "Deploy complete."
-```
-
-The only line that changed from what you ran is this — `unzip` → `python3`:
-```
-# OLD (broken)
-unzip -q /tmp/awscliv2.zip -d /tmp
-
-# NEW (fixed)
-python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
