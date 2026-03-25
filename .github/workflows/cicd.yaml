@@ -1,102 +1,4 @@
-name: CI/CD (ECR -> EC2)
-
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  AWS_REGION: ap-south-2
-  CONTAINER_NAME: incident-commander
-  HOST_PORT: "8000"
-  CONTAINER_PORT: "8000"
-
-jobs:
-  build_push_deploy:
-    runs-on: ubuntu-latest
-    env:
-      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-      PYDANTIC_AI_MODEL: ${{ secrets.PYDANTIC_AI_MODEL }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
-
-      - name: Run tests
-        run: python test_demo.py
-
-      - name: Validate required secrets
-        run: |
-          missing=0
-          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY ECR_REPOSITORY EC2_HOST EC2_USER; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required GitHub Secret: $name"
-              missing=1
-            fi
-          done
-          [ "$missing" -ne 0 ] && exit 1 || true
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify AWS identity
-        run: aws sts get-caller-identity
-
-      - name: Ensure ECR repository exists
-        run: |
-          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
-          aws ecr create-repository --repository-name "$ECR_REPOSITORY" >/dev/null
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Set image URI
-        run: |
-          echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_ENV"
-          echo "IMAGE_URI_LATEST=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest" >> "$GITHUB_ENV"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_URI }}
-            ${{ env.IMAGE_URI_LATEST }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Deploy to EC2 (SSH)
+- name: Deploy to EC2 (SSH)
         uses: appleboy/ssh-action@v1.0.3
         env:
           IMAGE_URI: ${{ env.IMAGE_URI }}
@@ -118,13 +20,21 @@ jobs:
           script: |
             set -eu
 
-            # ── install aws cli if missing (using Python3 to unzip) ──────
+            # ── install aws cli if missing ──────────────────────────────
             if ! command -v aws >/dev/null 2>&1; then
               echo "Installing AWS CLI..."
-              curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-              # Use python3 to extract since unzip is missing
+              # Auto-detect architecture (x86_64 or aarch64)
+              ARCH=$(uname -m)
+              URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+              [ "$ARCH" = "aarch64" ] && URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
+              
+              curl -fsSL "$URL" -o /tmp/awscliv2.zip
               python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
-              sudo /tmp/aws/install
+              
+              # IMPORTANT: Python extractall strips the executable bit. We must restore it.
+              chmod -R +x /tmp/aws
+              
+              sudo /tmp/aws/install --update
               rm -rf /tmp/awscliv2.zip /tmp/aws
             fi
 
@@ -133,45 +43,43 @@ jobs:
               echo "Installing Docker..."
               curl -fsSL https://get.docker.com | sudo sh
               sudo usermod -aG docker "$USER"
-              # Apply group changes to current session
-              newgrp docker <<EONG
-            EONG
+              # Note: Group changes require a logout/login. 
+              # We use 'sudo docker' below to ensure this works on the first run.
             fi
 
             echo "Deploying $IMAGE_URI"
 
+            # Log in to ECR
             ECR_REGISTRY="$(echo "$IMAGE_URI" | cut -d/ -f1)"
-            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            aws ecr get-login-password --region "$AWS_REGION" | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-            docker pull "$IMAGE_URI"
+            # Pull and Update
+            sudo docker pull "$IMAGE_URI"
 
-            if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
-              echo "Stopping/Removing existing container..."
-              docker stop "$CONTAINER_NAME" || true
-              docker rm   "$CONTAINER_NAME" || true
+            if sudo docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+              echo "Stopping and removing old container..."
+              sudo docker stop "$CONTAINER_NAME" || true
+              sudo docker rm   "$CONTAINER_NAME" || true
             fi
 
+            # Environment Setup
             ENV_FILE_ARGS=""
-            if [ -n "${EC2_ENV_FILE:-}" ]; then
-              # Only try to use the file if it actually exists on the EC2 filesystem
-              if [ -f "$EC2_ENV_FILE" ]; then
-                ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
-              else
-                echo "Warning: EC2_ENV_FILE defined but file not found at $EC2_ENV_FILE"
-              fi
+            if [ -n "${EC2_ENV_FILE:-}" ] && [ -f "$EC2_ENV_FILE" ]; then
+              ENV_FILE_ARGS="--env-file $EC2_ENV_FILE"
             fi
 
             SECRET_ENV_ARGS=""
             [ -n "${PYDANTIC_AI_MODEL:-}" ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e PYDANTIC_AI_MODEL=$PYDANTIC_AI_MODEL"
             [ -n "${OPENAI_API_KEY:-}"    ] && SECRET_ENV_ARGS="$SECRET_ENV_ARGS -e OPENAI_API_KEY=$OPENAI_API_KEY"
 
+            # Run Container
             # shellcheck disable=SC2086
-            docker run -d --restart unless-stopped \
+            sudo docker run -d --restart unless-stopped \
               --name "$CONTAINER_NAME" \
               -p "$HOST_PORT:$CONTAINER_PORT" \
               $ENV_FILE_ARGS \
               $SECRET_ENV_ARGS \
               "$IMAGE_URI"
 
-            docker image prune -f >/dev/null 2>&1 || true
+            sudo docker image prune -f >/dev/null 2>&1 || true
             echo "Deploy complete."
