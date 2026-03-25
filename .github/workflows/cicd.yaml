@@ -121,7 +121,6 @@ jobs:
             # ── install aws cli if missing ──────────────────────────────
             if ! command -v aws >/dev/null 2>&1; then
               echo "Installing AWS CLI..."
-              sudo apt-get install -y unzip 2>/dev/null || sudo yum install -y unzip 2>/dev/null || true
               curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
               python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
               sudo /tmp/aws/install
@@ -167,3 +166,12 @@ jobs:
 
             docker image prune -f >/dev/null 2>&1 || true
             echo "Deploy complete."
+```
+
+The only line that changed from what you ran is this — `unzip` → `python3`:
+```
+# OLD (broken)
+unzip -q /tmp/awscliv2.zip -d /tmp
+
+# NEW (fixed)
+python3 -c "import zipfile; zipfile.ZipFile('/tmp/awscliv2.zip').extractall('/tmp')"
